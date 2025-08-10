@@ -36,7 +36,7 @@ async function callAgent(agent: AgentConfig, user: string, conversationHistory: 
   // 会話履歴を構築
   const messages = [
     // システムプロンプト
-    agent.promptSystem ? { role: 'system', content: agent.promptSystem + '\n\n出力は短く。思考過程は出力しない。' } : { role: 'system', content: '出力は短く。思考過程は出力しない。' },
+    agent.promptSystem ? { role: 'system', content: agent.promptSystem } : null,
     // スタイルプロンプト
     agent.promptStyle ? { role: 'system', content: `[STYLE]\n${agent.promptStyle}` } : null,
     // 過去の会話履歴
@@ -52,7 +52,7 @@ async function callAgent(agent: AgentConfig, user: string, conversationHistory: 
     model: normalizeModelId(agent.provider, agent.model),
     temperature: agent.temperature,
     top_p: agent.top_p,
-    max_tokens: Math.min(agent.max_tokens ?? 128, 128),
+    max_tokens: agent.max_tokens, // ★固定値制限を削除、GUIの値をそのまま使用
     repetition_penalty: agent.repetition_penalty,
     messages, // ★履歴を含むmessagesを送信
     stream: true,

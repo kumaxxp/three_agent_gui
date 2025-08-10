@@ -223,13 +223,13 @@ export function AgentEditor({ role, config, onChange, debugEnabled = false }: { 
                       model: normalizeModelId(config.provider, config.model),
                       temperature: config.temperature,
                       top_p: config.top_p,
-                      max_tokens: Math.min(config.max_tokens ?? 64, 64), // ★一言想定で制限
+                      max_tokens: config.max_tokens,
                       repetition_penalty: config.repetition_penalty,
-                      system: (config.promptSystem ? config.promptSystem + '\n\n出力は短く。思考過程は出力しない。' : '出力は短く。思考過程は出力しない。'),
+                      system: config.promptSystem,
                       style: config.promptStyle,
                       user: testInput,
                       stream: true,
-                      enableDebug: debugEnabled // ★デバッグフラグを追加
+                      enableDebug: debugEnabled
                     }),
                     signal: ctrl.signal,
                   })

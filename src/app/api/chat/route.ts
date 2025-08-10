@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
       model: body.model,
       temperature: body.temperature ?? 0.6,
       top_p: body.top_p ?? 0.9,
-      max_tokens: body.max_tokens ?? 64, // ★デフォは控えめ
+      max_tokens: body.max_tokens, // ★デフォルト値を削除、クライアントからの値をそのまま使用
       repetition_penalty: body.repetition_penalty ?? 1.05,
       stream: true, // ★SSEで透過
       messages,
