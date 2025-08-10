@@ -7,6 +7,14 @@ import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } 
 import { CSS } from '@dnd-kit/utilities'
 
 
+// 対話状態の型定義
+interface DialogueState {
+  topic: string
+  turns: number
+  order: RoleKey[]
+  log: { who: RoleKey; text: string; model: string; provider: string }[]
+}
+
 function normalizeModelId(provider: AgentConfig['provider'], model: string) {
   const m = model.trim()
   if (provider === 'Ollama') {
@@ -89,32 +97,46 @@ function SortablePill({ id, label }: { id: string; label: string }) {
   )
 }
 
-export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }) {
-  const [topic, setTopic] = useState('冷蔵庫が鳴く理由')
-  const [turns, setTurns] = useState(6)
-  const [order, setOrder] = useState<RoleKey[]>(['director','boke','tsukkomi'])
-  const [log, setLog] = useState<{ who: RoleKey; text: string; model: string; provider: string }[]>([
-    { who: 'director', text: '本日のテーマは『冷蔵庫が鳴く理由』。まずはボケから一言。', model: agents.director.model, provider: agents.director.provider },
-    { who: 'boke', text: '氷の精霊が打楽器の練習してるだけ。', model: agents.boke.model, provider: agents.boke.provider },
-    { who: 'tsukkomi', text: '精霊いない。コンプレッサだよ。', model: agents.tsukkomi.model, provider: agents.tsukkomi.provider },
-  ])
-
+export function DialogueTab({ 
+  agents, 
+  dialogueState, 
+  setDialogueState 
+}: { 
+  agents: Record<RoleKey, AgentConfig>
+  dialogueState: DialogueState
+  setDialogueState: (state: DialogueState | ((prev: DialogueState) => DialogueState)) => void
+}) {
   const [running, setRunning] = useState(false)
+
+  // 状態更新のヘルパー関数
+  const updateTopic = (topic: string) => setDialogueState(prev => ({ ...prev, topic }))
+  const updateTurns = (turns: number) => setDialogueState(prev => ({ ...prev, turns }))
+  const updateOrder = (order: RoleKey[]) => setDialogueState(prev => ({ ...prev, order }))
+  const updateLog = (log: DialogueState['log']) => setDialogueState(prev => ({ ...prev, log }))
 
   async function startConversation() {
     if (running) return
     setRunning(true)
-    let current = topic
-    for (let i = 0; i < turns; i++) {
-      for (const role of order) {
+    let current = dialogueState.topic
+    
+    for (let i = 0; i < dialogueState.turns; i++) {
+      for (const role of dialogueState.order) {
         const cfg = agents[role]
         try {
           const msg = await callAgent(cfg, current)
-          setLog((prev) => [...prev, { who: role, text: msg, model: cfg.model, provider: cfg.provider }])
+          // 状態更新を関数形式にして、最新の状態を取得
+          setDialogueState(prev => ({
+            ...prev,
+            log: [...prev.log, { who: role, text: msg, model: cfg.model, provider: cfg.provider }]
+          }))
           current = msg
         } catch (e: any) {
-          setLog((prev) => [...prev, { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }])
-          current = topic  // エラー時は話題に戻すなど適宜処理
+          // エラー時も同様に関数形式で状態更新
+          setDialogueState(prev => ({
+            ...prev,
+            log: [...prev.log, { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }]
+          }))
+          current = dialogueState.topic  // エラー時は話題に戻すなど適宜処理
         }
       }
     }
@@ -123,11 +145,11 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const logEndRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [log])
+  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [dialogueState.log])
 
   const startMock = () => {
-    setLog((prev) => [
-      ...prev,
+    updateLog([
+      ...dialogueState.log,
       { who: 'director', text: 'テンポ上げます。次、逆張りボケから入って。', model: agents.director.model, provider: agents.director.provider },
       { who: 'boke', text: 'じゃあ静かな時は冷蔵庫が息止めてる。', model: agents.boke.model, provider: agents.boke.provider },
       { who: 'tsukkomi', text: '止めない。仕組み上。', model: agents.tsukkomi.model, provider: agents.tsukkomi.provider },
@@ -149,11 +171,11 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
               <label className="text-xs text-gray-600">話題</label>
-              <input className="mt-1 w-full rounded-xl border p-2" value={topic} onChange={(e) => setTopic(e.target.value)} />
+              <input className="mt-1 w-full rounded-xl border p-2" value={dialogueState.topic} onChange={(e) => updateTopic(e.target.value)} />
             </div>
             <div>
               <label className="text-xs text-gray-600">ターン数</label>
-              <input type="number" className="mt-1 w-full rounded-xl border p-2" value={turns} onChange={(e) => setTurns(Number(e.target.value))} />
+              <input type="number" className="mt-1 w-full rounded-xl border p-2" value={dialogueState.turns} onChange={(e) => updateTurns(Number(e.target.value))} />
             </div>
           </div>
           <div className="mt-3 text-xs text-gray-600">順序編集（ドラッグ&ドロップ）</div>
@@ -161,15 +183,15 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
             onDragEnd={(e)=>{
               const {active, over} = e
               if (over && active.id !== over.id) {
-                const ids = order.map((x)=>x)
+                const ids = dialogueState.order.map((x)=>x)
                 const oldIndex = ids.indexOf(active.id as any)
                 const newIndex = ids.indexOf(over.id as any)
-                setOrder(arrayMove(ids, oldIndex, newIndex) as any)
+                updateOrder(arrayMove(ids, oldIndex, newIndex) as any)
               }
             }}>
-            <SortableContext items={order} strategy={verticalListSortingStrategy}>
+            <SortableContext items={dialogueState.order} strategy={verticalListSortingStrategy}>
               <div className="flex gap-2 mt-2">
-                {order.map((r)=>(
+                {dialogueState.order.map((r)=>(
                   <SortablePill key={r} id={r} label={r==='boke'?'ボケ': r==='tsukkomi'?'ツッコミ':'ディレクター'} />
                 ))}
               </div>
@@ -184,8 +206,8 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
         <section className="rounded-2xl border p-4">
           <h3 className="font-semibold text-sm mb-3">対話ログ</h3>
           <div className="space-y-2 max-h-[52vh] overflow-auto pr-2">
-            {log.map((l, i) => (
-              <div key={i} className={`rounded-xl border p-3 ${i === log.length - 1 ? 'ring-1 ring-black/10' : ''}`}>
+            {dialogueState.log.map((l, i) => (
+              <div key={i} className={`rounded-xl border p-3 ${i === dialogueState.log.length - 1 ? 'ring-1 ring-black/10' : ''}`}>
                 <div className="flex items-center justify-between text-xs mb-1">
                   <div className="font-semibold">{l.who === 'boke' ? '[BOKE]' : l.who === 'tsukkomi' ? '[TSUK]' : '[DIR]'}</div>
                   {badge(l.who)}
@@ -204,7 +226,7 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
           <div className="flex flex-wrap gap-2">
             <MetricCard label="平均Latency" value={Math.round(((agents.boke.rtt ?? 150) + (agents.tsukkomi.rtt ?? 160) + (agents.director.rtt ?? 170)) / 3)} />
             <MetricCard label="平均tokens/s" value={Math.round(((agents.boke.tps ?? 8) + (agents.tsukkomi.tps ?? 7) + (agents.director.tps ?? 6)) / 3)} />
-            <MetricCard label="発話数" value={log.length} />
+            <MetricCard label="発話数" value={dialogueState.log.length} />
             <MetricCard label="被り率" value={'低'} />
           </div>
         </section>

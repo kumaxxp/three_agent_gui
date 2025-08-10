@@ -5,10 +5,30 @@ import { useAppStore, saveSettings, loadSettings } from '@/state/store'
 import { AgentEditor } from '@/components/AgentEditor'
 import { DialogueTab } from '@/components/DialogueTab'
 
+// 対話状態の型定義
+interface DialogueState {
+  topic: string
+  turns: number
+  order: RoleKey[]
+  log: { who: RoleKey; text: string; model: string; provider: string }[]
+}
+
 export default function Page() {
   const [tab, setTab] = useState<'boke'|'tsukkomi'|'director'|'dialogue'>('dialogue')
   const agents = useAppStore((s) => s.agents)
   const setAgent = useAppStore((s) => s.setAgent)
+
+  // 対話状態を親コンポーネントで管理
+  const [dialogueState, setDialogueState] = useState<DialogueState>({
+    topic: '冷蔵庫が鳴く理由',
+    turns: 6,
+    order: ['director', 'boke', 'tsukkomi'],
+    log: [
+      { who: 'director', text: '本日のテーマは『冷蔵庫が鳴く理由』。まずはボケから一言。', model: agents.director.model, provider: agents.director.provider },
+      { who: 'boke', text: '氷の精霊が打楽器の練習してるだけ。', model: agents.boke.model, provider: agents.boke.provider },
+      { who: 'tsukkomi', text: '精霊いない。コンプレッサだよ。', model: agents.tsukkomi.model, provider: agents.tsukkomi.provider },
+    ]
+  })
 
   const tabs: { key: typeof tab; label: string }[] = [
     { key: 'boke', label: 'ボケ' },
@@ -50,7 +70,7 @@ export default function Page() {
           {tab !== 'dialogue' && tab === 'boke' && <AgentEditor role="boke" config={agents.boke} onChange={update('boke')} />}
           {tab !== 'dialogue' && tab === 'tsukkomi' && <AgentEditor role="tsukkomi" config={agents.tsukkomi} onChange={update('tsukkomi')} />}
           {tab !== 'dialogue' && tab === 'director' && <AgentEditor role="director" config={agents.director} onChange={update('director')} />}
-          {tab === 'dialogue' && <DialogueTab agents={agents} />}
+          {tab === 'dialogue' && <DialogueTab agents={agents} dialogueState={dialogueState} setDialogueState={setDialogueState} />}
         </div>
       </main>
     </div>
