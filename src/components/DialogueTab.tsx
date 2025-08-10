@@ -6,6 +6,75 @@ import { DndContext, closestCenter, useSensor, useSensors, PointerSensor } from 
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
+
+function normalizeModelId(provider: AgentConfig['provider'], model: string) {
+  const m = model.trim()
+  if (provider === 'Ollama') {
+    const map: Record<string,string> = {
+      'Gemma3-4B': 'gemma3:4b',
+      'Gemma3-12B': 'gemma3:12b',
+      'GPT-OSS 20B': 'gpt-oss:20b',
+      'gpt-oss-20B': 'gpt-oss:20b',
+      'gemma3:4b': 'gemma3:4b',
+      'gemma3:12b': 'gemma3:12b',
+      'gpt-oss:20b': 'gpt-oss:20b',
+    }
+    return map[m] ?? m
+  }
+  return m
+}
+
+async function callAgent(agent: AgentConfig, user: string): Promise<string> {
+  const payload = {
+    provider: agent.provider,
+    endpoint: agent.endpoint,
+    apiKey: agent.apiKey,
+    model: normalizeModelId(agent.provider, agent.model),
+    temperature: agent.temperature,
+    top_p: agent.top_p,
+    max_tokens: Math.min(agent.max_tokens ?? 128, 128),
+    repetition_penalty: agent.repetition_penalty,
+    system: agent.promptSystem
+      ? agent.promptSystem + '\n\n出力は短く。思考過程は出力しない。'
+      : '出力は短く。思考過程は出力しない。',
+    style: agent.promptStyle,
+    user,
+    stream: true,
+  }
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '')
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let result = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    const chunk = decoder.decode(value, { stream: true })
+    for (const line of chunk.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const payloadStr = trimmed.slice(5).trim()
+      if (payloadStr === '[DONE]') continue
+      try {
+        const json = JSON.parse(payloadStr)
+        const delta = json?.choices?.[0]?.delta?.content ?? ''
+        if (delta) result += delta
+      } catch {
+        // JSON でない行は無視
+      }
+    }
+  }
+  return result
+}
+
 function SortablePill({ id, label }: { id: string; label: string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   const style: React.CSSProperties = {
@@ -29,6 +98,28 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
     { who: 'boke', text: '氷の精霊が打楽器の練習してるだけ。', model: agents.boke.model, provider: agents.boke.provider },
     { who: 'tsukkomi', text: '精霊いない。コンプレッサだよ。', model: agents.tsukkomi.model, provider: agents.tsukkomi.provider },
   ])
+
+  const [running, setRunning] = useState(false)
+
+  async function startConversation() {
+    if (running) return
+    setRunning(true)
+    let current = topic
+    for (let i = 0; i < turns; i++) {
+      for (const role of order) {
+        const cfg = agents[role]
+        try {
+          const msg = await callAgent(cfg, current)
+          setLog((prev) => [...prev, { who: role, text: msg, model: cfg.model, provider: cfg.provider }])
+          current = msg
+        } catch (e: any) {
+          setLog((prev) => [...prev, { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }])
+          current = topic  // エラー時は話題に戻すなど適宜処理
+        }
+      }
+    }
+    setRunning(false)
+  }
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const logEndRef = useRef<HTMLDivElement | null>(null)
@@ -85,7 +176,7 @@ export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }
             </SortableContext>
           </DndContext>
           <div className="mt-3 flex items-center gap-2">
-            <button className="rounded-xl bg-black text-white px-3 py-2" onClick={startMock}>開始（モック）</button>
+            <button className="mt-2 px-4 py-2 bg-blue-500 text-white rounded" onClick={startConversation} disabled={running}> 開始（対話）</button>
             <span className="text-xs text-gray-500">※モックは固定応答を追記します</span>
           </div>
         </section>
