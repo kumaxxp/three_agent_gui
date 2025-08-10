@@ -5,7 +5,7 @@ import type { AgentConfig, RoleKey, Provider, Failover } from '@/types'
 import { PROVIDERS } from '@/types'
 
 const MODEL_CATALOG: Record<Provider, string[]> = {
-  'Ollama': ['qwen:7b','qwen:14b','gemma:2b','llama3:8b'],
+  'Ollama': ['gemma3:4b','gemma3:12b','gpt-oss:20b'],
   'LM Studio': ['Gemma3-4B','Gemma3-12B','Qwen3-7B','gpt-oss-20B'],
   'vLLM': ['Gemma3-12B','Qwen3-14B','gpt-oss-20B'],
   'OpenAI互換URL': ['任意モデル名を入力']

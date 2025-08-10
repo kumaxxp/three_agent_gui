@@ -54,12 +54,15 @@ export async function POST(req: NextRequest) {
       messages,
     }
 
+    console.log('[proxy] endpoint=', url, 'payload=', JSON.stringify(payload))
+
     const upstream = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => '')
+      console.error('[proxy] upstream_error', upstream.status, text)
       return new Response(JSON.stringify({ error: 'upstream_error', status: upstream.status, detail: text }), { status: 502 })
     }
-
+    
     // ★ SSEをそのままパススルー
     return new Response(upstream.body, {
       status: 200,
