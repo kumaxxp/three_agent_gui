@@ -28,18 +28,88 @@ function defaultAgent(name: string): AgentConfig {
   }
 }
 
+type SavedSetting = {
+  id: string;
+  name: string;
+  timestamp: number;
+  agents: Record<RoleKey, AgentConfig>;
+}
+
 type AppState = {
   agents: Record<RoleKey, AgentConfig>;
   setAgent: (role: RoleKey, cfg: AgentConfig) => void;
+  // 複数設定管理用
+  savedSettings: SavedSetting[];
+  loadSavedSettings: () => void;
+  saveSetting: (name: string) => void;
+  loadSetting: (id: string) => void;
+  deleteSetting: (id: string) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   agents: {
     boke: defaultAgent('ボケ'),
     tsukkomi: defaultAgent('ツッコミ'),
     director: defaultAgent('ディレクター'),
   },
   setAgent: (role, cfg) => set((s) => ({ agents: { ...s.agents, [role]: cfg } })),
+  
+  // 複数設定管理
+  savedSettings: [],
+  
+  loadSavedSettings: () => {
+    try {
+      const raw = localStorage.getItem('three-agent-saved-settings')
+      if (raw) {
+        const settings = JSON.parse(raw) as SavedSetting[]
+        set({ savedSettings: settings })
+      }
+    } catch (e) {
+      console.error('保存済み設定の読み込みに失敗しました:', e)
+    }
+  },
+  
+  saveSetting: (name: string) => {
+    const { agents, savedSettings } = get()
+    const newSetting: SavedSetting = {
+      id: Date.now().toString(),
+      name,
+      timestamp: Date.now(),
+      agents: JSON.parse(JSON.stringify(agents)) // deep copy
+    }
+    
+    const updatedSettings = [...savedSettings, newSetting]
+    set({ savedSettings: updatedSettings })
+    
+    try {
+      localStorage.setItem('three-agent-saved-settings', JSON.stringify(updatedSettings))
+      console.log(`設定「${name}」を保存しました`)
+    } catch (e) {
+      console.error('設定の保存に失敗しました:', e)
+    }
+  },
+  
+  loadSetting: (id: string) => {
+    const { savedSettings } = get()
+    const setting = savedSettings.find(s => s.id === id)
+    if (setting) {
+      set({ agents: setting.agents })
+      console.log(`設定「${setting.name}」を読み込みました`)
+    }
+  },
+  
+  deleteSetting: (id: string) => {
+    const { savedSettings } = get()
+    const updatedSettings = savedSettings.filter(s => s.id !== id)
+    set({ savedSettings: updatedSettings })
+    
+    try {
+      localStorage.setItem('three-agent-saved-settings', JSON.stringify(updatedSettings))
+      console.log('設定を削除しました')
+    } catch (e) {
+      console.error('設定の削除に失敗しました:', e)
+    }
+  }
 }))
 
 // quick save/load helpers

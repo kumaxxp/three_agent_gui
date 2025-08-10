@@ -4,6 +4,7 @@ import type { RoleKey } from '@/types'
 import { useAppStore, saveSettings, loadSettings } from '@/state/store'
 import { AgentEditor } from '@/components/AgentEditor'
 import { DialogueTab } from '@/components/DialogueTab'
+import SettingsManager from '@/components/SettingsManager'
 
 // 対話状態の型定義
 interface DialogueState {
@@ -16,6 +17,7 @@ interface DialogueState {
 export default function Page() {
   const [tab, setTab] = useState<'boke'|'tsukkomi'|'director'|'dialogue'>('dialogue')
   const [feedback, setFeedback] = useState<string>('')
+  const [showSettingsManager, setShowSettingsManager] = useState(false)
   const agents = useAppStore((s) => s.agents)
   const setAgent = useAppStore((s) => s.setAgent)
 
@@ -66,8 +68,14 @@ export default function Page() {
         <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
           <div className="text-lg font-semibold">3エージェント対話GUI — ローカルMVP</div>
           <div className="flex items-center gap-2 text-xs">
-            <button className="rounded-xl border px-3 py-1.5" onClick={handleSaveSettings}>設定保存</button>
-            <button className="rounded-xl border px-3 py-1.5" onClick={handleLoadSettings}>読み込み</button>
+            <button 
+              className="rounded-xl border px-3 py-1.5" 
+              onClick={() => setShowSettingsManager(true)}
+            >
+              設定管理
+            </button>
+            <button className="rounded-xl border px-3 py-1.5" onClick={handleSaveSettings}>クイック保存</button>
+            <button className="rounded-xl border px-3 py-1.5" onClick={handleLoadSettings}>クイック読込</button>
             <button className="rounded-xl bg-black text-white px-3 py-1.5" onClick={()=>{
               const blob = new Blob([JSON.stringify(agents, null, 2)], {type:'application/json'})
               const url = URL.createObjectURL(blob)
@@ -100,6 +108,13 @@ export default function Page() {
           {tab === 'dialogue' && <DialogueTab agents={agents} dialogueState={dialogueState} setDialogueState={setDialogueState} />}
         </div>
       </main>
+
+      {/* 設定管理モーダル */}
+      <SettingsManager
+        isOpen={showSettingsManager}
+        onClose={() => setShowSettingsManager(false)}
+        onFeedback={showFeedback}
+      />
     </div>
   )
 }
