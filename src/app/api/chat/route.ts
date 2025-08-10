@@ -86,7 +86,8 @@ export async function POST(req: NextRequest) {
       stream: true, // ★SSEで透過
       messages,
       // ★「一言系」で暴走しにくいストッパ
-      stop: ['\n\n', '<|endofthinking|>', '</reasoning>']
+      //stop: ['\n\n', '<|endofthinking|>', '</reasoning>']
+      stop: ['<|endofthinking|>', '</reasoning>']
     }
 
     if (wantsLowReasoning) {

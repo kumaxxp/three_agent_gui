@@ -240,7 +240,6 @@ export function AgentEditor({ role, config, onChange, debugEnabled = false }: { 
 
                   const reader = res.body.getReader()
                   const decoder = new TextDecoder('utf-8')
-                  const charLimit = 400 // ★一言ボケの上限（体感速度最優先）
                   let tokenCount = 0
                   let emitted = ''
 
@@ -261,13 +260,7 @@ export function AgentEditor({ role, config, onChange, debugEnabled = false }: { 
                         if (delta) {
                           tokenCount += 1
                           emitted += delta
-                          setTestOutput((prev) => {
-                            const next = prev + delta
-                            if (next.length >= charLimit) {
-                              ctrl.abort() // ★早めに打ち切る
-                            }
-                            return next
-                          })
+                          setTestOutput((prev) => prev + delta)
                         }
                       } catch {
                         // JSONでない行は無視
