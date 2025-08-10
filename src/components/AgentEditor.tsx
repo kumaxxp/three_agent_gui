@@ -9,10 +9,9 @@ const MODEL_CATALOG: Record<Provider, string[]> = {
   'Ollama': ['gemma3:4b','gemma3:12b','gpt-oss:20b'],
   'LM Studio': ['Gemma3-4B','Gemma3-12B','Qwen3-7B','gpt-oss-20B'],
   'vLLM': ['Gemma3-12B','Qwen3-14B','gpt-oss-20B'],
-  'OpenAI互換URL': ['任意モデル名を入力']
+  'OpenAI互換URL': ['任意モデル名を入力'],
 }
 
-// 表示名→実IDの正規化（将来ラベル運用しても安全）
 function normalizeModelId(provider: Provider, model: string) {
   const m = model.trim()
   if (provider === 'Ollama') {
@@ -20,6 +19,7 @@ function normalizeModelId(provider: Provider, model: string) {
       'Gemma3-4B': 'gemma3:4b',
       'Gemma3-12B': 'gemma3:12b',
       'GPT-OSS 20B': 'gpt-oss:20b',
+      'gpt-oss-20B': 'gpt-oss:20b',
       'gemma3:4b': 'gemma3:4b',
       'gemma3:12b': 'gemma3:12b',
       'gpt-oss:20b': 'gpt-oss:20b',

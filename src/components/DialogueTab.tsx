@@ -20,7 +20,7 @@ function SortablePill({ id, label }: { id: string; label: string }) {
   )
 }
 
-export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }) {
+export function DialogueTab({ agents }: { agents: Record<RoleKey, AgentConfig> }) {  
   const [topic, setTopic] = useState('冷蔵庫が鳴く理由')
   const [turns, setTurns] = useState(6)
   const [order, setOrder] = useState<RoleKey[]>(['director','boke','tsukkomi'])
