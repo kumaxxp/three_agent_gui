@@ -32,7 +32,7 @@ function normalizeModelId(provider: AgentConfig['provider'], model: string) {
   return m
 }
 
-async function callAgent(agent: AgentConfig, user: string, conversationHistory: Array<{ role: string; content: string }> = []): Promise<string> {
+async function callAgent(agent: AgentConfig, user: string, conversationHistory: Array<{ role: string; content: string }> = [], debugEnabled = false): Promise<string> {
   // 会話履歴を構築
   const messages = [
     // システムプロンプト
@@ -56,6 +56,7 @@ async function callAgent(agent: AgentConfig, user: string, conversationHistory: 
     repetition_penalty: agent.repetition_penalty,
     messages, // ★履歴を含むmessagesを送信
     stream: true,
+    enableDebug: debugEnabled, // ★デバッグフラグを追加
   }
   const res = await fetch('/api/chat', {
     method: 'POST',
@@ -108,11 +109,13 @@ function SortablePill({ id, label }: { id: string; label: string }) {
 export function DialogueTab({ 
   agents, 
   dialogueState, 
-  setDialogueState 
+  setDialogueState,
+  debugEnabled = false
 }: { 
   agents: Record<RoleKey, AgentConfig>
   dialogueState: DialogueState
   setDialogueState: (state: DialogueState | ((prev: DialogueState) => DialogueState)) => void
+  debugEnabled?: boolean
 }) {
   const [running, setRunning] = useState(false)
 
@@ -140,7 +143,7 @@ export function DialogueTab({
             content: l.text 
           }))
           
-          const msg = await callAgent(cfg, current, conversationHistory)
+          const msg = await callAgent(cfg, current, conversationHistory, debugEnabled)
           
           // ローカルログを更新
           const newEntry = { who: role, text: msg, model: cfg.model, provider: cfg.provider }
