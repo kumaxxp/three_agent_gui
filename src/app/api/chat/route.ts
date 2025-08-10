@@ -14,6 +14,7 @@ type Body = {
   system?: string
   style?: string
   user: string
+  stream?: boolean
 }
 
 function defaultEndpoint(provider: string | undefined) {
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     }
     const url = endpoint.replace(/\/$/, '') + '/chat/completions'
 
-    const headers: Record<string,string> = { 'content-type': 'application/json' }
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (body.apiKey) headers['authorization'] = `Bearer ${body.apiKey}`
 
     const messages = [
@@ -49,19 +50,27 @@ export async function POST(req: NextRequest) {
       top_p: body.top_p ?? 0.9,
       max_tokens: body.max_tokens ?? 512,
       repetition_penalty: body.repetition_penalty ?? 1.05,
-      stream: false,
-      messages
+      stream: true,            // ★ 常にSSEで受けてクライアントに透過
+      messages,
     }
 
-    const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
-    if (!r.ok) {
-      const text = await r.text()
-      return new Response(JSON.stringify({ error: 'upstream_error', status: r.status, detail: text }), { status: 502 })
+    const upstream = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
+    if (!upstream.ok || !upstream.body) {
+      const text = await upstream.text().catch(() => '')
+      return new Response(JSON.stringify({ error: 'upstream_error', status: upstream.status, detail: text }), { status: 502 })
     }
-    const data = await r.json()
-    const content = data?.choices?.[0]?.message?.content ?? ''
-    const usage = data?.usage ?? null
-    return new Response(JSON.stringify({ content, usage }), { status: 200, headers: { 'content-type': 'application/json' } })
+
+    // ★ SSEをそのままパススルー
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
+        'connection': 'keep-alive',
+        // Next.jsの中間プロキシで圧縮されないように
+        'x-accel-buffering': 'no',
+      },
+    })
   } catch (e: any) {
     return new Response(JSON.stringify({ error: 'proxy_failed', detail: String(e?.message || e) }), { status: 500 })
   }
