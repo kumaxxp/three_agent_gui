@@ -5,10 +5,28 @@ import type { AgentConfig, RoleKey, Provider, Failover } from '@/types'
 import { PROVIDERS } from '@/types'
 
 const MODEL_CATALOG: Record<Provider, string[]> = {
+  // ★Ollamaは実IDで統一
   'Ollama': ['gemma3:4b','gemma3:12b','gpt-oss:20b'],
   'LM Studio': ['Gemma3-4B','Gemma3-12B','Qwen3-7B','gpt-oss-20B'],
   'vLLM': ['Gemma3-12B','Qwen3-14B','gpt-oss-20B'],
   'OpenAI互換URL': ['任意モデル名を入力']
+}
+
+// 表示名→実IDの正規化（将来ラベル運用しても安全）
+function normalizeModelId(provider: Provider, model: string) {
+  const m = model.trim()
+  if (provider === 'Ollama') {
+    const map: Record<string,string> = {
+      'Gemma3-4B': 'gemma3:4b',
+      'Gemma3-12B': 'gemma3:12b',
+      'GPT-OSS 20B': 'gpt-oss:20b',
+      'gemma3:4b': 'gemma3:4b',
+      'gemma3:12b': 'gemma3:12b',
+      'gpt-oss:20b': 'gpt-oss:20b',
+    }
+    return map[m] ?? m
+  }
+  return m
 }
 
 export function AgentEditor({ role, config, onChange }: { role: RoleKey; config: AgentConfig; onChange: (c: AgentConfig) => void }) {
@@ -173,7 +191,7 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
           </div>
         </section>
 
-        {/* Unit Test (SSE) */}
+        {/* Unit Test (SSE + Abort + 文字数上限) */}
         <section className="rounded-2xl border p-4">
           <h3 className="font-semibold text-sm mb-3">単体テスト（SSE）</h3>
           <div className="flex gap-2">
@@ -191,7 +209,7 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
                 setTestOutput('')
                 const startedAt = performance.now()
                 const ctrl = new AbortController()
-                ;(window as any).__agentTestAbort?.abort?.() // 既存ストリームがあれば止める
+                ;(window as any).__agentTestAbort?.abort?.()
                 ;(window as any).__agentTestAbort = ctrl
 
                 try {
@@ -202,12 +220,12 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
                       provider: config.provider,
                       endpoint: config.endpoint,
                       apiKey: config.apiKey,
-                      model: config.model,
+                      model: normalizeModelId(config.provider, config.model),
                       temperature: config.temperature,
                       top_p: config.top_p,
-                      max_tokens: config.max_tokens,
+                      max_tokens: Math.min(config.max_tokens ?? 64, 64), // ★一言想定で制限
                       repetition_penalty: config.repetition_penalty,
-                      system: config.promptSystem,
+                      system: (config.promptSystem ? config.promptSystem + '\n\n出力は短く。思考過程は出力しない。' : '出力は短く。思考過程は出力しない。'),
                       style: config.promptStyle,
                       user: testInput,
                       stream: true
@@ -221,7 +239,9 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
 
                   const reader = res.body.getReader()
                   const decoder = new TextDecoder('utf-8')
+                  const charLimit = 400 // ★一言ボケの上限（体感速度最優先）
                   let tokenCount = 0
+                  let emitted = ''
 
                   for (;;) {
                     const { done, value } = await reader.read()
@@ -239,10 +259,17 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
                         const delta = json?.choices?.[0]?.delta?.content ?? ''
                         if (delta) {
                           tokenCount += 1
-                          setTestOutput((prev) => prev + delta)
+                          emitted += delta
+                          setTestOutput((prev) => {
+                            const next = prev + delta
+                            if (next.length >= charLimit) {
+                              ctrl.abort() // ★早めに打ち切る
+                            }
+                            return next
+                          })
                         }
                       } catch {
-                        // JSONでなければ無視
+                        // JSONでない行は無視
                       }
                     }
                   }

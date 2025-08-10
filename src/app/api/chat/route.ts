@@ -44,33 +44,46 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: body.user },
     ].filter(Boolean)
 
-    const payload = {
+    // reasoning系モデルの簡易判定（抑制用）
+    const wantsLowReasoning =
+      (body.model?.toLowerCase().includes('gpt-oss')) ||
+      (body.model?.toLowerCase().includes('reason')) ||
+      (body.model?.toLowerCase().includes('deepseek'))
+
+    const payload: any = {
       model: body.model,
-      temperature: body.temperature ?? 0.7,
+      temperature: body.temperature ?? 0.6,
       top_p: body.top_p ?? 0.9,
-      max_tokens: body.max_tokens ?? 512,
+      max_tokens: body.max_tokens ?? 64, // ★デフォは控えめ
       repetition_penalty: body.repetition_penalty ?? 1.05,
-      stream: true,            // ★ 常にSSEで受けてクライアントに透過
+      stream: true, // ★SSEで透過
       messages,
+      // ★「一言系」で暴走しにくいストッパ
+      stop: ['\n\n', '<|endofthinking|>', '</reasoning>']
     }
 
-    console.log('[proxy] endpoint=', url, 'payload=', JSON.stringify(payload))
+    if (wantsLowReasoning) {
+      // ★対応クライアントでは内部reasoningを弱める（無視されても害なし）
+      payload.reasoning = { effort: 'low' }
+    }
+
+    // デバッグしたいときは有効化
+    // console.log('[proxy] endpoint=', url, 'payload=', JSON.stringify({ model: payload.model, max_tokens: payload.max_tokens }))
 
     const upstream = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) })
     if (!upstream.ok || !upstream.body) {
       const text = await upstream.text().catch(() => '')
-      console.error('[proxy] upstream_error', upstream.status, text)
+      // console.error('[proxy] upstream_error', upstream.status, text)
       return new Response(JSON.stringify({ error: 'upstream_error', status: upstream.status, detail: text }), { status: 502 })
     }
-    
-    // ★ SSEをそのままパススルー
+
+    // ★SSEそのまま返す
     return new Response(upstream.body, {
       status: 200,
       headers: {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache, no-transform',
         'connection': 'keep-alive',
-        // Next.jsの中間プロキシで圧縮されないように
         'x-accel-buffering': 'no',
       },
     })
