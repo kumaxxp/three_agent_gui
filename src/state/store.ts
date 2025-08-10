@@ -44,14 +44,35 @@ export const useAppStore = create<AppState>((set) => ({
 
 // quick save/load helpers
 export function saveSettings() {
-  try { localStorage.setItem('three-agent-settings', JSON.stringify((useAppStore.getState().agents))) } catch {}
+  try { 
+    localStorage.setItem('three-agent-settings', JSON.stringify(useAppStore.getState().agents))
+    console.log('設定を保存しました')
+  } catch (e) {
+    console.error('設定の保存に失敗しました:', e)
+  }
 }
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem('three-agent-settings')
-    if (!raw) return
+    if (!raw) {
+      console.log('保存された設定が見つかりません')
+      return false
+    }
     const obj = JSON.parse(raw)
-    const st = useAppStore.getState()
-    Object.entries(obj).forEach(([k,v])=> st.setAgent(k as any, v as any))
-  } catch {}
+    const store = useAppStore.getState()
+    
+    // 各エージェントの設定を順次更新
+    Object.entries(obj).forEach(([role, config]) => {
+      if (role === 'boke' || role === 'tsukkomi' || role === 'director') {
+        store.setAgent(role as RoleKey, config as AgentConfig)
+      }
+    })
+    
+    console.log('設定を読み込みました')
+    return true
+  } catch (e) {
+    console.error('設定の読み込みに失敗しました:', e)
+    return false
+  }
 }

@@ -15,6 +15,7 @@ interface DialogueState {
 
 export default function Page() {
   const [tab, setTab] = useState<'boke'|'tsukkomi'|'director'|'dialogue'>('dialogue')
+  const [feedback, setFeedback] = useState<string>('')
   const agents = useAppStore((s) => s.agents)
   const setAgent = useAppStore((s) => s.setAgent)
 
@@ -39,20 +40,46 @@ export default function Page() {
 
   const update = (key: RoleKey) => (cfg: any) => setAgent(key, cfg)
 
+  // フィードバック表示のヘルパー
+  const showFeedback = (message: string) => {
+    setFeedback(message)
+    setTimeout(() => setFeedback(''), 2000)
+  }
+
+  const handleSaveSettings = () => {
+    saveSettings()
+    showFeedback('設定を保存しました')
+  }
+
+  const handleLoadSettings = () => {
+    const success = loadSettings()
+    if (success) {
+      showFeedback('設定を読み込みました')
+    } else {
+      showFeedback('保存された設定が見つかりません')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-white">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
           <div className="text-lg font-semibold">3エージェント対話GUI — ローカルMVP</div>
           <div className="flex items-center gap-2 text-xs">
-            <button className="rounded-xl border px-3 py-1.5" onClick={()=>saveSettings()}>設定保存</button>
-            <button className="rounded-xl border px-3 py-1.5" onClick={()=>loadSettings()}>読み込み</button>
+            <button className="rounded-xl border px-3 py-1.5" onClick={handleSaveSettings}>設定保存</button>
+            <button className="rounded-xl border px-3 py-1.5" onClick={handleLoadSettings}>読み込み</button>
             <button className="rounded-xl bg-black text-white px-3 py-1.5" onClick={()=>{
               const blob = new Blob([JSON.stringify(agents, null, 2)], {type:'application/json'})
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a'); a.href = url; a.download = 'settings.json'; a.click()
               URL.revokeObjectURL(url)
+              showFeedback('設定をエクスポートしました')
             }}>エクスポート</button>
+            {feedback && (
+              <div className="ml-4 rounded-xl bg-green-100 text-green-700 px-3 py-1.5 text-xs">
+                {feedback}
+              </div>
+            )}
           </div>
         </div>
       </header>
