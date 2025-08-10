@@ -5,7 +5,7 @@ function defaultAgent(name: string): AgentConfig {
   return {
     name,
     provider: 'Ollama',
-    model: 'gemma3:4b',
+    model: 'gemma3:4b',                  // ★初期を実IDへ
     temperature: name === 'ボケ' ? 0.9 : name === 'ツッコミ' ? 0.4 : 0.6,
     top_p: 0.9,
     max_tokens: 512,
