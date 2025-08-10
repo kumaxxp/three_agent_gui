@@ -15,6 +15,7 @@ type Body = {
   style?: string
   user: string
   stream?: boolean
+  messages?: Array<{ role: string; content: string }> // ★履歴用フィールド追加
 }
 
 function defaultEndpoint(provider: string | undefined) {
@@ -38,7 +39,8 @@ export async function POST(req: NextRequest) {
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (body.apiKey) headers['authorization'] = `Bearer ${body.apiKey}`
 
-    const messages = [
+    // ★履歴がある場合はそれを使用し、ない場合は従来通り
+    const messages = body.messages || [
       body.system ? { role: 'system', content: body.system } : null,
       body.style ? { role: 'system', content: `[STYLE]\n${body.style}` } : null,
       { role: 'user', content: body.user },

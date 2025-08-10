@@ -32,7 +32,19 @@ function normalizeModelId(provider: AgentConfig['provider'], model: string) {
   return m
 }
 
-async function callAgent(agent: AgentConfig, user: string): Promise<string> {
+async function callAgent(agent: AgentConfig, user: string, conversationHistory: Array<{ role: string; content: string }> = []): Promise<string> {
+  // 会話履歴を構築
+  const messages = [
+    // システムプロンプト
+    agent.promptSystem ? { role: 'system', content: agent.promptSystem + '\n\n出力は短く。思考過程は出力しない。' } : { role: 'system', content: '出力は短く。思考過程は出力しない。' },
+    // スタイルプロンプト
+    agent.promptStyle ? { role: 'system', content: `[STYLE]\n${agent.promptStyle}` } : null,
+    // 過去の会話履歴
+    ...conversationHistory,
+    // 現在のユーザー入力
+    { role: 'user', content: user },
+  ].filter(Boolean) as Array<{ role: string; content: string }>
+
   const payload = {
     provider: agent.provider,
     endpoint: agent.endpoint,
@@ -42,11 +54,7 @@ async function callAgent(agent: AgentConfig, user: string): Promise<string> {
     top_p: agent.top_p,
     max_tokens: Math.min(agent.max_tokens ?? 128, 128),
     repetition_penalty: agent.repetition_penalty,
-    system: agent.promptSystem
-      ? agent.promptSystem + '\n\n出力は短く。思考過程は出力しない。'
-      : '出力は短く。思考過程は出力しない。',
-    style: agent.promptStyle,
-    user,
+    messages, // ★履歴を含むmessagesを送信
     stream: true,
   }
   const res = await fetch('/api/chat', {
@@ -119,24 +127,40 @@ export function DialogueTab({
     setRunning(true)
     let current = dialogueState.topic
     
+    // 現在のログ状態をローカル変数で管理
+    let currentLog = [...dialogueState.log]
+    
     for (let i = 0; i < dialogueState.turns; i++) {
       for (const role of dialogueState.order) {
         const cfg = agents[role]
         try {
-          const msg = await callAgent(cfg, current)
-          // 状態更新を関数形式にして、最新の状態を取得
+          // ★ローカルのログ状態から会話履歴を構築
+          const conversationHistory = currentLog.map(l => ({ 
+            role: 'assistant', // 全てassistantとして扱う（AIの発言として）
+            content: l.text 
+          }))
+          
+          const msg = await callAgent(cfg, current, conversationHistory)
+          
+          // ローカルログを更新
+          const newEntry = { who: role, text: msg, model: cfg.model, provider: cfg.provider }
+          currentLog.push(newEntry)
+          
+          // 状態を更新
           setDialogueState(prev => ({
             ...prev,
-            log: [...prev.log, { who: role, text: msg, model: cfg.model, provider: cfg.provider }]
+            log: [...currentLog]
           }))
           current = msg
         } catch (e: any) {
-          // エラー時も同様に関数形式で状態更新
+          // エラー時の処理
+          const errorEntry = { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }
+          currentLog.push(errorEntry)
           setDialogueState(prev => ({
             ...prev,
-            log: [...prev.log, { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }]
+            log: [...currentLog]
           }))
-          current = dialogueState.topic  // エラー時は話題に戻すなど適宜処理
+          current = dialogueState.topic  // エラー時は話題に戻す
         }
       }
     }
