@@ -164,9 +164,9 @@ export default function Page() {
         </div>
 
         <div className="mt-2">
-          {tab !== 'dialogue' && tab !== 'debug' && tab === 'boke' && <AgentEditor role="boke" config={agents.boke} onChange={update('boke')} />}
-          {tab !== 'dialogue' && tab !== 'debug' && tab === 'tsukkomi' && <AgentEditor role="tsukkomi" config={agents.tsukkomi} onChange={update('tsukkomi')} />}
-          {tab !== 'dialogue' && tab !== 'debug' && tab === 'director' && <AgentEditor role="director" config={agents.director} onChange={update('director')} />}
+          {tab !== 'dialogue' && tab !== 'debug' && tab === 'boke' && <AgentEditor role="boke" config={agents.boke} onChange={update('boke')} debugEnabled={debugEnabled} />}
+          {tab !== 'dialogue' && tab !== 'debug' && tab === 'tsukkomi' && <AgentEditor role="tsukkomi" config={agents.tsukkomi} onChange={update('tsukkomi')} debugEnabled={debugEnabled} />}
+          {tab !== 'dialogue' && tab !== 'debug' && tab === 'director' && <AgentEditor role="director" config={agents.director} onChange={update('director')} debugEnabled={debugEnabled} />}
           {tab === 'dialogue' && <DialogueTab agents={agents} dialogueState={dialogueState} setDialogueState={setDialogueState} debugEnabled={debugEnabled} />}
           {tab === 'debug' && <DebugTab logs={debugLogs} onClear={handleClearDebugLogs} />}
         </div>

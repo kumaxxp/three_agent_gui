@@ -29,7 +29,7 @@ function normalizeModelId(provider: Provider, model: string) {
   return m
 }
 
-export function AgentEditor({ role, config, onChange }: { role: RoleKey; config: AgentConfig; onChange: (c: AgentConfig) => void }) {
+export function AgentEditor({ role, config, onChange, debugEnabled = false }: { role: RoleKey; config: AgentConfig; onChange: (c: AgentConfig) => void; debugEnabled?: boolean }) {
   const models = useMemo(() => MODEL_CATALOG[config.provider], [config.provider])
   const isCustom = config.provider === 'OpenAI互換URL'
 
@@ -193,7 +193,7 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
 
         {/* Unit Test (SSE + Abort + 文字数上限) */}
         <section className="rounded-2xl border p-4">
-          <h3 className="font-semibold text-sm mb-3">単体テスト（SSE）</h3>
+          <h3 className="font-semibold text-sm mb-3">単体テスト（SSE）{debugEnabled && <span className="ml-2 text-xs text-blue-600">デバッグモード</span>}</h3>
           <div className="flex gap-2">
             <input
               className="flex-1 rounded-xl border p-2"
@@ -228,7 +228,8 @@ export function AgentEditor({ role, config, onChange }: { role: RoleKey; config:
                       system: (config.promptSystem ? config.promptSystem + '\n\n出力は短く。思考過程は出力しない。' : '出力は短く。思考過程は出力しない。'),
                       style: config.promptStyle,
                       user: testInput,
-                      stream: true
+                      stream: true,
+                      enableDebug: debugEnabled // ★デバッグフラグを追加
                     }),
                     signal: ctrl.signal,
                   })
