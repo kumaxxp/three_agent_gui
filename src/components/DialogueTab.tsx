@@ -33,18 +33,54 @@ function normalizeModelId(provider: AgentConfig['provider'], model: string) {
   return m
 }
 
-async function callAgent(agent: AgentConfig, user: string, conversationHistory: Array<{ role: string; content: string }> = [], debugEnabled = false): Promise<string> {
-  // 会話履歴を構築
-  const messages = [
-    // システムプロンプト
-    agent.promptSystem ? { role: 'system', content: agent.promptSystem } : null,
-    // スタイルプロンプト
-    agent.promptStyle ? { role: 'system', content: `[STYLE]\n${agent.promptStyle}` } : null,
-    // 過去の会話履歴
-    ...conversationHistory,
-    // 現在のユーザー入力
-    { role: 'user', content: user },
-  ].filter(Boolean) as Array<{ role: string; content: string }>
+// ★ 修正：エージェントごとに適切な会話履歴を構築
+async function callAgent(
+  agent: AgentConfig, 
+  currentRole: RoleKey,  // ★ 追加：現在のエージェントの役割
+  dialogueLog: DialogueState['log'],  // ★ 変更：全体のログを受け取る
+  debugEnabled = false
+): Promise<string> {
+  // ★ 重要な修正：会話履歴を構築する際、役割を明確にする
+  const messages: Array<{ role: string; content: string }> = []
+  
+  // システムプロンプトを追加
+  if (agent.promptSystem) {
+    messages.push({ role: 'system', content: agent.promptSystem })
+  }
+  
+  // スタイルプロンプトを追加
+  if (agent.promptStyle) {
+    messages.push({ role: 'system', content: `[STYLE]\n${agent.promptStyle}` })
+  }
+  
+  // ★ 会話履歴を適切に構築
+  // 最初にトピックを提示
+  if (dialogueLog.length > 0) {
+    // 会話の流れを一つの文脈として構築
+    let conversationContext = "これまでの会話:\n"
+    dialogueLog.forEach(entry => {
+      const speaker = entry.who === 'boke' ? 'ボケ' : 
+                     entry.who === 'tsukkomi' ? 'ツッコミ' : 
+                     'ディレクター'
+      conversationContext += `${speaker}: ${entry.text}\n`
+    })
+    
+    // 最新の発言を基に、次の応答を求める
+    const lastEntry = dialogueLog[dialogueLog.length - 1]
+    conversationContext += `\nあなたは「${
+      currentRole === 'boke' ? 'ボケ' : 
+      currentRole === 'tsukkomi' ? 'ツッコミ' : 
+      'ディレクター'
+    }」として、この会話に続けて応答してください。`
+    
+    messages.push({ role: 'user', content: conversationContext })
+  } else {
+    // 初回の場合はトピックだけを送る
+    messages.push({ 
+      role: 'user', 
+      content: `話題: ${dialogueLog.length === 0 ? '冷蔵庫が鳴く理由' : dialogueLog[dialogueLog.length - 1].text}` 
+    })
+  }
 
   const payload = {
     provider: agent.provider,
@@ -59,11 +95,13 @@ async function callAgent(agent: AgentConfig, user: string, conversationHistory: 
     stream: true,
     enableDebug: debugEnabled,
   }
+  
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   })
+  
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '')
     throw new Error(text || `HTTP ${res.status}`)
@@ -72,6 +110,7 @@ async function callAgent(agent: AgentConfig, user: string, conversationHistory: 
   const reader = res.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let result = ''
+  
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
@@ -140,121 +179,162 @@ export function DialogueTab({
   const updateLog = (log: DialogueState['log']) => setDialogueState(prev => ({ ...prev, log }))
 
   // ★ 修正版：スマートモードとクラシックモードの両方に対応
-  async function startConversation() {
-    if (running) return
-    setRunning(true)
-    let current = dialogueState.topic
-    
-    // 現在のログ状態をローカル変数で管理
-    let currentLog = [...dialogueState.log]
-    
-    if (conversationMode === 'classic') {
-      // ===== クラシックモード（従来の固定順序）=====
-      for (let i = 0; i < dialogueState.turns; i++) {
-        for (const role of dialogueState.order) {
-          const cfg = agents[role]
-          try {
-            const conversationHistory = currentLog.map(l => ({ 
-              role: 'assistant',
-              content: l.text 
-            }))
-            
-            const msg = await callAgent(cfg, current, conversationHistory, debugEnabled)
-            
-            const newEntry = { who: role, text: msg, model: cfg.model, provider: cfg.provider }
-            currentLog.push(newEntry)
-            
-            setDialogueState(prev => ({
-              ...prev,
-              log: [...currentLog]
-            }))
-            current = msg
-          } catch (e: any) {
-            const errorEntry = { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }
-            currentLog.push(errorEntry)
-            setDialogueState(prev => ({
-              ...prev,
-              log: [...currentLog]
-            }))
-            current = dialogueState.topic
-          }
-        }
-      }
-    } else {
-      // ===== スマートモード（動的発言順序）=====
-      const totalTurns = dialogueState.turns * 3 // 3人分のターン数
-      
-      for (let i = 0; i < totalTurns; i++) {
-        // 次の発言者を動的に選択
-        const context: ConversationContext = {
-          topic: dialogueState.topic,
-          history: currentLog.map(l => ({
-            who: l.who,
-            text: l.text,
-            timestamp: Date.now()
-          })),
-          currentTurn: i,
-          agents
-        }
-        
-        const nextSpeaker = await conversationManager.current.selectNextSpeaker(context)
-        setNextSpeakerPrediction(nextSpeaker) // UI更新用
-        
-        const cfg = agents[nextSpeaker]
+// startConversation関数の修正版（該当部分のみ抜粋）
+// DialogueTab.tsx の startConversation 関数を以下に置き換えてください
+
+async function startConversation() {
+  if (running) return
+  setRunning(true)
+  
+  // ★ 初回メッセージを追加（ディレクターから開始）
+  let currentLog = [...dialogueState.log]
+  if (currentLog.length === 0) {
+    // 最初のディレクターのメッセージを追加
+    const directorMsg = `本日のテーマは『${dialogueState.topic}』です。それでは始めましょう。`
+    currentLog = [{
+      who: 'director' as RoleKey,
+      text: directorMsg,
+      model: agents.director.model,
+      provider: agents.director.provider
+    }]
+    setDialogueState(prev => ({
+      ...prev,
+      log: currentLog
+    }))
+  }
+  
+  if (conversationMode === 'classic') {
+    // ===== クラシックモード（従来の固定順序）=====
+    for (let i = 0; i < dialogueState.turns; i++) {
+      for (const role of dialogueState.order) {
+        const cfg = agents[role]
         try {
-          const conversationHistory = currentLog.map(l => ({ 
-            role: 'assistant',
-            content: l.text 
-          }))
+          const msg = await callAgent(cfg, role, currentLog, debugEnabled)
           
-          const msg = await callAgent(cfg, current, conversationHistory, debugEnabled)
-          
-          const newEntry = { 
-            who: nextSpeaker, 
-            text: msg, 
-            model: cfg.model, 
-            provider: cfg.provider 
-          }
+          const newEntry = { who: role, text: msg, model: cfg.model, provider: cfg.provider }
           currentLog.push(newEntry)
           
           setDialogueState(prev => ({
             ...prev,
             log: [...currentLog]
           }))
-          current = msg
         } catch (e: any) {
-          const errorEntry = { 
-            who: nextSpeaker, 
-            text: '【エラー】' + e.message, 
-            model: cfg.model, 
-            provider: cfg.provider 
-          }
+          const errorEntry = { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }
           currentLog.push(errorEntry)
           setDialogueState(prev => ({
             ...prev,
             log: [...currentLog]
           }))
-          current = dialogueState.topic
         }
       }
     }
+  } else {
+    // ===== スマートモード（動的発言順序）=====
+    // ★★★ 重要な修正: ターン数の解釈を明確化 ★★★
+    // 1ターン = 3人が1回ずつ発言（クラシックモードと同じ）
+    // ただし順序は動的
     
-    setRunning(false)
-    setNextSpeakerPrediction(null)
+    // ★ 発言回数のカウンター（上限管理用）
+    const maxUtterances = dialogueState.turns * 3  // 3人分
+    let utteranceCount = 0
+    
+    // ★ 各エージェントの発言回数を追跡（バランス用）
+    const speakerCounts: Record<RoleKey, number> = {
+      boke: 0,
+      tsukkomi: 0,
+      director: 0
+    }
+    
+    // ★ メインループ：上限に達するまで続ける
+    while (utteranceCount < maxUtterances) {
+      // 現在のターン数を計算
+      const currentTurn = Math.floor(utteranceCount / 3)
+      
+      // 次の発言者を動的に選択
+      const context: ConversationContext = {
+        topic: dialogueState.topic,
+        history: currentLog.map(l => ({
+          who: l.who,
+          text: l.text,
+          timestamp: Date.now()
+        })),
+        currentTurn: currentTurn,
+        agents
+      }
+      
+      let nextSpeaker = await conversationManager.current.selectNextSpeaker(context)
+      
+      // ★ 追加の制約：各ターンで同じ人が2回以上発言しないようにする
+      // （リアクティブモードでディレクターが連続介入するのを防ぐ）
+      const currentTurnStart = currentTurn * 3
+      const currentTurnUtterances = currentLog.slice(currentTurnStart + 1) // +1は初回メッセージ分
+      const speakersInCurrentTurn = currentTurnUtterances.map(u => u.who)
+      
+      // 現在のターンで既に2回発言している場合は別の人を選ぶ
+      const countInCurrentTurn = speakersInCurrentTurn.filter(w => w === nextSpeaker).length
+      if (countInCurrentTurn >= 1 && strategy === 'reactive') {
+        // リアクティブモードでも各ターン1回までに制限
+        const availableSpeakers = (['boke', 'tsukkomi', 'director'] as RoleKey[])
+          .filter(r => speakersInCurrentTurn.filter(w => w === r).length === 0)
+        
+        if (availableSpeakers.length > 0) {
+          // まだ発言していない人から選ぶ
+          nextSpeaker = availableSpeakers[Math.floor(Math.random() * availableSpeakers.length)]
+        }
+      }
+      
+      setNextSpeakerPrediction(nextSpeaker) // UI更新用
+      
+      const cfg = agents[nextSpeaker]
+      try {
+        const msg = await callAgent(cfg, nextSpeaker, currentLog, debugEnabled)
+        
+        const newEntry = { 
+          who: nextSpeaker, 
+          text: msg, 
+          model: cfg.model, 
+          provider: cfg.provider 
+        }
+        currentLog.push(newEntry)
+        speakerCounts[nextSpeaker]++
+        utteranceCount++
+        
+        setDialogueState(prev => ({
+          ...prev,
+          log: [...currentLog]
+        }))
+        
+        // ★ デバッグ情報（コンソールで確認用）
+        console.log(`[Smart Mode] Turn ${currentTurn + 1}/${dialogueState.turns}, Utterance ${utteranceCount}/${maxUtterances}, Speaker: ${nextSpeaker}`)
+        
+      } catch (e: any) {
+        const errorEntry = { 
+          who: nextSpeaker, 
+          text: '【エラー】' + e.message, 
+          model: cfg.model, 
+          provider: cfg.provider 
+        }
+        currentLog.push(errorEntry)
+        utteranceCount++ // エラーでもカウントは進める
+        
+        setDialogueState(prev => ({
+          ...prev,
+          log: [...currentLog]
+        }))
+      }
+    }
+    
+    // ★ 最終的な発言回数をログ出力（デバッグ用）
+    console.log('[Smart Mode] 完了 - 発言回数:', speakerCounts)
   }
+  
+  setRunning(false)
+  setNextSpeakerPrediction(null)
+}
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const logEndRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [dialogueState.log])
-
-  const startMock = () => {
-    updateLog([
-      ...dialogueState.log,
-      { who: 'director', text: 'テンポ上げます。次、逆張りボケから入って。', model: agents.director.model, provider: agents.director.provider },
-      { who: 'boke', text: 'じゃあ静かな時は冷蔵庫が息止めてる。', model: agents.boke.model, provider: agents.boke.provider },
-      { who: 'tsukkomi', text: '止めない。仕組み上。', model: agents.tsukkomi.model, provider: agents.tsukkomi.provider },
-    ])
-  }
 
   const badge = (who: RoleKey) => (
     <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px]">
@@ -354,6 +434,15 @@ export function DialogueTab({
             <button className="mt-2 px-4 py-2 bg-blue-500 text-white rounded" onClick={startConversation} disabled={running}>
               開始（対話）
             </button>
+            <button 
+              className="mt-2 px-4 py-2 bg-gray-500 text-white rounded" 
+              onClick={() => {
+                setDialogueState(prev => ({ ...prev, log: [] }))
+              }}
+              disabled={running}
+            >
+              クリア
+            </button>
             {conversationMode === 'smart' && running && nextSpeakerPrediction && (
               <span className="text-xs text-purple-600 animate-pulse">
                 次の発言者: {nextSpeakerPrediction === 'boke' ? 'ボケ' : 
@@ -367,13 +456,18 @@ export function DialogueTab({
         <section className="rounded-2xl border p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-sm">対話ログ</h3>
-            {conversationMode === 'smart' && (
-              <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
-                {strategy === 'reactive' ? '文脈応答モード' :
-                 strategy === 'balanced' ? 'バランスモード' :
-                 'ラウンドロビンモード'}
+            <div className="flex items-center gap-2">
+              {conversationMode === 'smart' && (
+                <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
+                  {strategy === 'reactive' ? '文脈応答モード' :
+                   strategy === 'balanced' ? 'バランスモード' :
+                   'ラウンドロビンモード'}
+                </span>
+              )}
+              <span className="text-xs text-gray-500">
+                {dialogueState.log.length} 発言
               </span>
-            )}
+            </div>
           </div>
           <div className="space-y-2 max-h-[52vh] overflow-auto pr-2">
             {dialogueState.log.map((l, i) => (

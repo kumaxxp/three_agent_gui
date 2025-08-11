@@ -149,6 +149,8 @@ abstract class SelectionStrategy {
   ): RoleKey
 }
 
+// ConversationManager.ts の ReactiveStrategy クラスを以下に置き換えてください
+
 /**
  * リアクティブ戦略：文脈に応じて最適な発言者を選択
  */
@@ -157,7 +159,7 @@ class ReactiveStrategy extends SelectionStrategy {
     context: ConversationContext,
     analysis: ConversationAnalysis
   ): RoleKey {
-    // ディレクターが介入すべきタイミングを判定
+    // ★ 修正：ディレクターの介入条件を厳格化
     if (this.shouldDirectorIntervene(analysis)) {
       return 'director'
     }
@@ -179,16 +181,16 @@ class ReactiveStrategy extends SelectionStrategy {
   }
 
   private shouldDirectorIntervene(analysis: ConversationAnalysis): boolean {
-    // 以下の条件でディレクターが介入
+    // ★ 修正：介入条件を厳格化（頻度を下げる）
     return (
-      // トピックから逸脱しすぎている
-      analysis.topicDrift > 0.7 ||
-      // 緊張度が高すぎる
-      analysis.tensionLevel > 0.8 ||
-      // 会話の勢いが落ちている
-      analysis.momentum < 0.3 ||
-      // ディレクターが長く発言していない
-      analysis.turnsSinceDirector > 6
+      // トピックから大きく逸脱している（閾値を上げた）
+      analysis.topicDrift > 0.85 ||
+      // 緊張度が非常に高い（閾値を上げた）
+      analysis.tensionLevel > 0.9 ||
+      // 会話の勢いが著しく落ちている（閾値を下げた）
+      analysis.momentum < 0.2 ||
+      // ディレクターがかなり長く発言していない（回数を増やした）
+      analysis.turnsSinceDirector > 10
     )
   }
 }
