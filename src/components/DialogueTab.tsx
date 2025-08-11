@@ -5,11 +5,14 @@ import { MetricCard } from './MetricCard'
 import { DndContext, closestCenter, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-// ★ Phase 1のインポート
+// Phase 1のインポート
 import { SmartConversationManager, type ConversationContext } from '@/lib/conversation-manager/ConversationManager'
-// ★ Phase 2の新規インポート
+// Phase 2のインポート
 import { ConversationAnalyzer, type DetailedAnalysis } from '@/lib/conversation-manager/ConversationAnalyzer'
 import { ConversationAnalysisPanel } from './ConversationAnalysisPanel'
+// Phase 3のインポート
+import { AdaptivePromptSystem, type PromptVariant, type ExperimentResult } from '@/lib/prompt-evolution/AdaptivePromptSystem'
+import { PromptEvolutionPanel } from './PromptEvolutionPanel'
 
 // 対話状態の型定義
 interface DialogueState {
@@ -34,6 +37,18 @@ function normalizeModelId(provider: AgentConfig['provider'], model: string) {
     return map[m] ?? m
   }
   return m
+}
+
+// Phase 3: プロンプトバリアントを適用した設定を返す
+function applyPromptVariant(agent: AgentConfig, variant?: PromptVariant): AgentConfig {
+  if (!variant) return agent
+  
+  return {
+    ...agent,
+    promptSystem: variant.systemPrompt,
+    promptStyle: variant.stylePrompt,
+    temperature: variant.temperature
+  }
 }
 
 async function callAgent(
@@ -158,21 +173,66 @@ export function DialogueTab({
   const [strategy, setStrategy] = useState<'round_robin' | 'reactive' | 'balanced'>('reactive')
   const [nextSpeakerPrediction, setNextSpeakerPrediction] = useState<RoleKey | null>(null)
   
-  // ★ Phase 2の新規状態
+  // Phase 2の状態
   const [showAnalysis, setShowAnalysis] = useState(false)
   const [currentAnalysis, setCurrentAnalysis] = useState<DetailedAnalysis | null>(null)
   
+  // Phase 3の状態
+  const [adaptivePromptsEnabled, setAdaptivePromptsEnabled] = useState(false)
+  const [showEvolution, setShowEvolution] = useState(false)
+  const [activeVariants, setActiveVariants] = useState<Map<RoleKey, PromptVariant>>(new Map())
+  const [evolutionStats, setEvolutionStats] = useState<Map<RoleKey, any>>(new Map())
+  
   // マネージャーのインスタンス
   const conversationManager = useRef(new SmartConversationManager(strategy))
-  // ★ Phase 2: アナライザーのインスタンス
   const conversationAnalyzer = useRef(new ConversationAnalyzer(dialogueState.topic))
+  // Phase 3: 適応型プロンプトシステムのインスタンス（設定を調整）
+  const adaptivePromptSystem = useRef(new AdaptivePromptSystem({
+    explorationRate: 0.3,        // 30%の確率で新しいバリアントを試す
+    minSampleSize: 2,             // 最小2回で評価開始
+    confidenceThreshold: 0.8,    // 信頼度閾値を下げる
+    mutationRate: 0.2,            // 突然変異率を上げる
+    crossoverRate: 0.3,           // 交叉率
+    selectionPressure: 1.2,       // 選択圧を下げる
+    maxVariants: 15,              // バリアント数を増やす
+    maxGenerations: 10,           // 世代数を現実的に
+    autoImprove: true,
+    improvementThreshold: 0.05    // 5%の改善でも採用
+  }))
+  
+  // Phase 3: 初期化時にベースラインプロンプトを登録
+  useEffect(() => {
+    const roles: RoleKey[] = ['boke', 'tsukkomi', 'director']
+    roles.forEach(role => {
+      adaptivePromptSystem.current.registerBaselinePrompt(role, agents[role])
+    })
+  }, []) // 初回のみ実行
+  
+  // Phase 3: 進化統計を更新
+  useEffect(() => {
+    if (!adaptivePromptsEnabled) return
+    
+    const updateStats = () => {
+      const stats = new Map<RoleKey, any>()
+      const roles: RoleKey[] = ['boke', 'tsukkomi', 'director']
+      roles.forEach(role => {
+        stats.set(role, adaptivePromptSystem.current.getEvolutionStats(role))
+      })
+      setEvolutionStats(stats)
+    }
+    
+    updateStats()
+    const interval = setInterval(updateStats, 5000) // 5秒ごとに更新
+    
+    return () => clearInterval(interval)
+  }, [adaptivePromptsEnabled])
 
   // 戦略が変更されたらマネージャーを更新
   useEffect(() => {
     conversationManager.current.setStrategy(strategy)
   }, [strategy])
   
-  // ★ Phase 2: トピックが変更されたらアナライザーを更新
+  // トピックが変更されたらアナライザーを更新
   useEffect(() => {
     conversationAnalyzer.current = new ConversationAnalyzer(dialogueState.topic)
   }, [dialogueState.topic])
@@ -183,14 +243,12 @@ export function DialogueTab({
   const updateOrder = (order: RoleKey[]) => setDialogueState(prev => ({ ...prev, order }))
   const updateLog = (log: DialogueState['log']) => setDialogueState(prev => ({ ...prev, log }))
 
-  // ★ Phase 2: 分析を実行する関数
+  // 修正版：分析を常に実行（表示とは独立）
   const performAnalysis = (log: DialogueState['log'], currentTurn: number) => {
-    if (!showAnalysis) return
-    
     const messages = log.map(l => ({
       who: l.who,
       text: l.text,
-      timestamp: Date.now() // 簡易的にタイムスタンプを追加
+      timestamp: Date.now()
     }))
     
     const analysis = conversationAnalyzer.current.analyzeConversation(
@@ -200,12 +258,120 @@ export function DialogueTab({
       dialogueState.turns
     )
     
-    setCurrentAnalysis(analysis)
+    // 表示用の状態更新は showAnalysis が有効な場合のみ
+    if (showAnalysis) {
+      setCurrentAnalysis(analysis)
+    }
+    
+    // 重要：分析結果を返す（記録用）
+    return analysis
+  }
+  
+  // 修正版：実験結果の記録を改善
+  const recordExperiment = (
+    variantId: string,
+    role: RoleKey,
+    response: string,
+    startTime: number,
+    analysis?: DetailedAnalysis
+  ) => {
+    if (!adaptivePromptsEnabled) return
+    
+    // 分析がない場合の簡易メトリクス
+    let qualityMetrics = {
+      coherence: 0.5,
+      engagement: 0.5,
+      humor: 0.5,
+      topicRelevance: 0.5,
+      overall: 0.5
+    }
+    
+    // 分析結果がある場合は使用
+    if (analysis) {
+      qualityMetrics = {
+        coherence: analysis.coherence,
+        engagement: analysis.engagement,
+        humor: analysis.humor,
+        topicRelevance: 1 - analysis.topicDrift,
+        overall: (analysis.coherence + analysis.engagement + (1 - analysis.topicDrift)) / 3
+      }
+    } else {
+      // 簡易評価：応答の長さと内容から推定
+      const responseLength = response.length
+      const hasQuestion = response.includes('？') || response.includes('?')
+      const hasExclamation = response.includes('！') || response.includes('!')
+      const wordCount = response.split(/[\s、。]/g).filter(w => w.length > 0).length
+      
+      // 長さから品質を推定
+      const lengthScore = Math.min(responseLength / 100, 1) // 100文字で満点
+      
+      // エンゲージメントを推定
+      const engagementScore = (hasQuestion ? 0.2 : 0) + (hasExclamation ? 0.2 : 0) + 0.5
+      
+      // 全体的な品質スコア
+      qualityMetrics = {
+        coherence: lengthScore * 0.8 + 0.2,
+        engagement: engagementScore,
+        humor: role === 'boke' ? 0.7 : 0.5,  // ボケは高めに評価
+        topicRelevance: 0.6 + Math.random() * 0.2,  // ランダム要素を追加
+        overall: (lengthScore + engagementScore) / 2
+      }
+    }
+    
+    const result: ExperimentResult = {
+      variantId,
+      conversationId: `conv_${Date.now()}`,
+      timestamp: Date.now(),
+      qualityMetrics,
+      responseMetrics: {
+        avgLength: response.length,
+        avgTime: Date.now() - startTime,
+        turnCount: dialogueState.log.length
+      }
+    }
+    
+    console.log(`[AdaptivePrompt] Recording experiment for ${role}:`, {
+      variantId,
+      score: qualityMetrics.overall.toFixed(3),
+      length: response.length
+    })
+    
+    adaptivePromptSystem.current.recordExperiment(result)
+  }
+  
+  // Phase 3: ユーザー評価を処理
+  const handleUserRating = (variantId: string, rating: number, comment?: string) => {
+    const result: ExperimentResult = {
+      variantId,
+      conversationId: `conv_${Date.now()}`,
+      timestamp: Date.now(),
+      qualityMetrics: {
+        coherence: rating / 5,
+        engagement: rating / 5,
+        humor: rating / 5,
+        topicRelevance: rating / 5,
+        overall: rating / 5
+      },
+      responseMetrics: {
+        avgLength: 100, // ダミー値
+        avgTime: 1000, // ダミー値
+        turnCount: dialogueState.log.length
+      },
+      userFeedback: {
+        rating,
+        comment
+      }
+    }
+    
+    adaptivePromptSystem.current.recordExperiment(result)
   }
 
   async function startConversation() {
     if (running) return
     setRunning(true)
+    
+    // Phase 3: 会話IDを生成
+    const conversationId = `conv_${Date.now()}`
     
     let currentLog = [...dialogueState.log]
     if (currentLog.length === 0) {
@@ -221,7 +387,6 @@ export function DialogueTab({
         log: currentLog
       }))
       
-      // ★ Phase 2: 初回分析
       performAnalysis(currentLog, 0)
     }
     
@@ -229,7 +394,20 @@ export function DialogueTab({
       // クラシックモード
       for (let i = 0; i < dialogueState.turns; i++) {
         for (const role of dialogueState.order) {
-          const cfg = agents[role]
+          let cfg = agents[role]
+          let variantId: string | undefined
+          
+          // Phase 3: 適応型プロンプトが有効な場合
+          if (adaptivePromptsEnabled) {
+            const variant = adaptivePromptSystem.current.selectPrompt(role)
+            cfg = applyPromptVariant(cfg, variant)
+            variantId = variant.id
+            activeVariants.set(role, variant)
+            console.log(`[AdaptivePrompt] Using variant ${variant.id} for ${role} (gen: ${variant.generation}, score: ${variant.performance.avgQualityScore.toFixed(3)})`)
+          }
+          
+          const startTime = Date.now()
+          
           try {
             const msg = await callAgent(cfg, role, currentLog, debugEnabled)
             
@@ -241,8 +419,13 @@ export function DialogueTab({
               log: [...currentLog]
             }))
             
-            // ★ Phase 2: 各発言後に分析を更新
-            performAnalysis(currentLog, i)
+            // 修正：分析を実行して結果を取得
+            const analysis = performAnalysis(currentLog, i)
+            
+            // Phase 3: 実験結果を記録（分析結果も渡す）
+            if (variantId) {
+              recordExperiment(variantId, role, msg, startTime, analysis)
+            }
           } catch (e: any) {
             const errorEntry = { who: role, text: '【エラー】' + e.message, model: cfg.model, provider: cfg.provider }
             currentLog.push(errorEntry)
@@ -267,7 +450,6 @@ export function DialogueTab({
       while (utteranceCount < maxUtterances) {
         const currentTurn = Math.floor(utteranceCount / 3)
         
-        // ★ Phase 2: 分析結果を使って次の発言者を選択（スマートモードの場合）
         const context: ConversationContext = {
           topic: dialogueState.topic,
           history: currentLog.map(l => ({
@@ -281,7 +463,6 @@ export function DialogueTab({
         
         let nextSpeaker = await conversationManager.current.selectNextSpeaker(context)
         
-        // 現在のターンで既に発言している人を制限
         const currentTurnStart = currentTurn * 3
         const currentTurnUtterances = currentLog.slice(currentTurnStart + 1)
         const speakersInCurrentTurn = currentTurnUtterances.map(u => u.who)
@@ -298,7 +479,20 @@ export function DialogueTab({
         
         setNextSpeakerPrediction(nextSpeaker)
         
-        const cfg = agents[nextSpeaker]
+        let cfg = agents[nextSpeaker]
+        let variantId: string | undefined
+        
+        // Phase 3: 適応型プロンプトが有効な場合
+        if (adaptivePromptsEnabled) {
+          const variant = adaptivePromptSystem.current.selectPrompt(nextSpeaker)
+          cfg = applyPromptVariant(cfg, variant)
+          variantId = variant.id
+          activeVariants.set(nextSpeaker, variant)
+          console.log(`[AdaptivePrompt] Using variant ${variant.id} for ${nextSpeaker} (gen: ${variant.generation}, score: ${variant.performance.avgQualityScore.toFixed(3)})`)
+        }
+        
+        const startTime = Date.now()
+        
         try {
           const msg = await callAgent(cfg, nextSpeaker, currentLog, debugEnabled)
           
@@ -317,8 +511,13 @@ export function DialogueTab({
             log: [...currentLog]
           }))
           
-          // ★ Phase 2: 各発言後に分析を更新
-          performAnalysis(currentLog, currentTurn)
+          // 修正：分析を実行して結果を取得
+          const analysis = performAnalysis(currentLog, currentTurn)
+          
+          // Phase 3: 実験結果を記録（分析結果も渡す）
+          if (variantId) {
+            recordExperiment(variantId, nextSpeaker, msg, startTime, analysis)
+          }
           
           console.log(`[Smart Mode] Turn ${currentTurn + 1}/${dialogueState.turns}, Utterance ${utteranceCount}/${maxUtterances}, Speaker: ${nextSpeaker}`)
           
@@ -394,7 +593,7 @@ export function DialogueTab({
             {/* スマートモード選択時の追加オプション */}
             {conversationMode === 'smart' && (
               <div className="mt-2 pt-2 border-t">
-                <div className="flex items-center justify-between">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-gray-600">選択戦略</label>
                     <select
@@ -408,8 +607,7 @@ export function DialogueTab({
                     </select>
                   </div>
                   
-                  {/* ★ Phase 2: 分析表示トグル */}
-                  <div className="ml-4">
+                  <div className="space-y-2">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input 
                         type="checkbox" 
@@ -418,6 +616,22 @@ export function DialogueTab({
                         className="rounded"
                       />
                       <span className="text-xs">リアルタイム分析</span>
+                    </label>
+                    
+                    {/* Phase 3: 適応型プロンプトのトグル */}
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={adaptivePromptsEnabled}
+                        onChange={(e) => {
+                          setAdaptivePromptsEnabled(e.target.checked)
+                          if (e.target.checked) {
+                            setShowEvolution(true)
+                          }
+                        }}
+                        className="rounded"
+                      />
+                      <span className="text-xs">🧬 適応型プロンプト</span>
                     </label>
                   </div>
                 </div>
@@ -475,6 +689,73 @@ export function DialogueTab({
             >
               クリア
             </button>
+            
+            {/* Phase 3: テスト用バリアント生成ボタン */}
+            {adaptivePromptsEnabled && (
+              <button 
+                className="mt-2 px-4 py-2 bg-purple-500 text-white rounded text-xs" 
+                onClick={() => {
+                  const roles: RoleKey[] = ['boke', 'tsukkomi', 'director']
+                  roles.forEach(role => {
+                    // 現在のベストバリアントを取得
+                    const currentBest = adaptivePromptSystem.current.exportState().currentBest.get(role)
+                    if (currentBest) {
+                      // 強制的に新しいバリアントを生成
+                      const newVariant: PromptVariant = {
+                        id: `${role}_v${currentBest.version + 1}_test_${Date.now()}`,
+                        roleKey: role,
+                        version: currentBest.version + 1,
+                        generation: currentBest.generation + 1,
+                        systemPrompt: currentBest.systemPrompt + '\n【テスト】より創造的に。',
+                        stylePrompt: currentBest.stylePrompt + '\n意外性を重視。',
+                        temperature: Math.min(1, currentBest.temperature + 0.1),
+                        performance: {
+                          totalUses: 0,
+                          successRate: 0,
+                          avgQualityScore: 0.5,
+                          avgResponseLength: 0,
+                          avgResponseTime: 0,
+                          coherenceScore: 0.5,
+                          engagementScore: 0.5,
+                          topicRelevanceScore: 0.5,
+                          userRatings: [],
+                          avgUserRating: 0,
+                          confidenceInterval: 0
+                        },
+                        createdAt: Date.now(),
+                        parentId: currentBest.id,
+                        mutationType: 'manual',
+                        experimentCount: 0,
+                        isActive: true,
+                        isBaseline: false
+                      }
+                      
+                      // AdaptivePromptSystemに直接追加
+                      const state = adaptivePromptSystem.current.exportState()
+                      const variants = state.variants.get(role) || []
+                      variants.push(newVariant)
+                      state.variants.set(role, variants)
+                      adaptivePromptSystem.current.importState(state)
+                      
+                      console.log(`[Manual] Created test variant for ${role}: ${newVariant.id}`)
+                    }
+                  })
+                  
+                  // 統計を更新
+                  const stats = new Map<RoleKey, any>()
+                  roles.forEach(role => {
+                    stats.set(role, adaptivePromptSystem.current.getEvolutionStats(role))
+                  })
+                  setEvolutionStats(stats)
+                  
+                  alert('テストバリアントを生成しました。次回の会話で使用される可能性があります。')
+                }}
+                disabled={running}
+              >
+                🧪 バリアント生成
+              </button>
+            )}
+            
             {conversationMode === 'smart' && running && nextSpeakerPrediction && (
               <span className="text-xs text-purple-600 animate-pulse">
                 次の発言者: {nextSpeakerPrediction === 'boke' ? 'ボケ' : 
@@ -496,6 +777,12 @@ export function DialogueTab({
                    'ラウンドロビンモード'}
                 </span>
               )}
+              {/* Phase 3: 適応型プロンプト使用中の表示 */}
+              {adaptivePromptsEnabled && (
+                <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-full">
+                  🧬 適応中
+                </span>
+              )}
               <span className="text-xs text-gray-500">
                 {dialogueState.log.length} 発言
               </span>
@@ -506,7 +793,15 @@ export function DialogueTab({
               <div key={i} className={`rounded-xl border p-3 ${i === dialogueState.log.length - 1 ? 'ring-1 ring-black/10' : ''}`}>
                 <div className="flex items-center justify-between text-xs mb-1">
                   <div className="font-semibold">{l.who === 'boke' ? '[BOKE]' : l.who === 'tsukkomi' ? '[TSUK]' : '[DIR]'}</div>
-                  {badge(l.who)}
+                  <div className="flex items-center gap-1">
+                    {badge(l.who)}
+                    {/* Phase 3: 使用中のバリアント表示 */}
+                    {adaptivePromptsEnabled && activeVariants.get(l.who) && (
+                      <span className="text-[9px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded">
+                        v{activeVariants.get(l.who)!.version}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="text-sm">{l.text}</div>
               </div>
@@ -514,11 +809,60 @@ export function DialogueTab({
             <div ref={logEndRef} />
           </div>
         </section>
+        
+        {/* Phase 3: デバッグ情報（開発時のみ表示） */}
+        {adaptivePromptsEnabled && debugEnabled && (
+          <section className="rounded-2xl border p-4 bg-yellow-50">
+            <h3 className="font-semibold text-sm mb-3">🔬 適応型プロンプト デバッグ情報</h3>
+            <div className="space-y-2 text-xs font-mono">
+              {(['boke', 'tsukkomi', 'director'] as RoleKey[]).map(role => {
+                const variant = activeVariants.get(role)
+                const stats = adaptivePromptSystem.current.getEvolutionStats(role)
+                return (
+                  <div key={role} className="border-b pb-2">
+                    <div className="font-bold">{role === 'boke' ? 'ボケ' : role === 'tsukkomi' ? 'ツッコミ' : 'ディレクター'}</div>
+                    {variant && (
+                      <>
+                        <div>現在: {variant.id}</div>
+                        <div>世代: {variant.generation} / バージョン: {variant.version}</div>
+                        <div>スコア: {variant.performance.avgQualityScore.toFixed(3)}</div>
+                        <div>実験回数: {variant.experimentCount}</div>
+                        <div>温度: {variant.temperature.toFixed(2)}</div>
+                      </>
+                    )}
+                    <div className="mt-1 text-[10px] text-gray-600">
+                      総バリアント: {stats.totalVariants} | 
+                      アクティブ: {stats.activeVariants} | 
+                      最高スコア: {stats.bestScore.toFixed(3)} | 
+                      改善率: {(stats.improvementRate * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                )
+              })}
+              
+              <div className="pt-2 text-[10px] text-gray-600">
+                <div>探索率: {(0.3 * 100).toFixed(0)}%</div>
+                <div>最小サンプル: 2回</div>
+                <div>自動改善: 有効</div>
+                <div className="mt-1 text-blue-600">
+                  💡 ヒント: 3回同じ会話を実行すると、新しいバリアントが生成されます
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
       </div>
 
       <div className="col-span-4 space-y-4">
-        {/* ★ Phase 2: リアルタイム分析パネル */}
-        {showAnalysis && conversationMode === 'smart' ? (
+        {/* Phase 3: プロンプト進化パネル */}
+        {showEvolution && adaptivePromptsEnabled ? (
+          <PromptEvolutionPanel
+            variants={adaptivePromptSystem.current.exportState().variants}
+            currentBest={adaptivePromptSystem.current.exportState().currentBest}
+            evolutionStats={evolutionStats}
+            onUserRating={handleUserRating}
+          />
+        ) : showAnalysis && conversationMode === 'smart' ? (
           <ConversationAnalysisPanel 
             analysis={currentAnalysis} 
             isRunning={running}
@@ -543,12 +887,14 @@ export function DialogueTab({
                               strategy === 'balanced' ? 'バランス' : 
                               'ラウンドロビン'}</div>
                   <div>動的選択: 有効</div>
-                  <div className="mt-2 text-[10px] text-purple-600">
-                    ※ ディレクターは会話の流れを見て自動介入します
-                  </div>
-                  {!showAnalysis && (
+                  {!showAnalysis && !adaptivePromptsEnabled && (
                     <div className="mt-2 p-2 bg-purple-50 rounded text-[10px]">
-                      💡 リアルタイム分析を有効にすると、詳細な会話メトリクスが表示されます
+                      💡 リアルタイム分析や適応型プロンプトを有効にすると、より高度な機能が利用できます
+                    </div>
+                  )}
+                  {adaptivePromptsEnabled && (
+                    <div className="mt-2 p-2 bg-green-50 rounded text-[10px]">
+                      🧬 プロンプトは会話から学習して自動的に改善されます
                     </div>
                   )}
                 </div>
