@@ -33,9 +33,12 @@ export function AgentEditor({ role, config, onChange, debugEnabled = false }: { 
   const models = useMemo(() => MODEL_CATALOG[config.provider], [config.provider])
   const isCustom = config.provider === 'OpenAI互換URL'
 
-  const [testInput, setTestInput] = React.useState('この話題で一言ボケて: 冷蔵庫が鳴く理由')
   const [testOutput, setTestOutput] = React.useState<string>('')
   const [busy, setBusy] = React.useState(false)
+
+  // ★testInputはstoreから取得・更新するように変更
+  const testInput = config.testInput || ''
+  const setTestInput = (value: string) => onChange({ ...config, testInput: value })
 
   return (
     <div className="grid grid-cols-12 gap-4">

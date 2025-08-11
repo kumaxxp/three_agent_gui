@@ -22,4 +22,5 @@ export interface AgentConfig {
   tps?: number;
   promptSystem: string;
   promptStyle: string;
+  testInput?: string; // ★単体テスト用の入力を追加
 }
